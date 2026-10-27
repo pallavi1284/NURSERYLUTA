@@ -1,0 +1,198 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ─── Helper Functions ─────────────────────────────────────────────────────
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Admin check: user must exist in /users/<uid> with role == 'admin'
+    // AND email must match the single authorized admin email.
+    // This is the server-side enforcement — the client pre-checks email too but
+    // the real security boundary is here.
+    function isAdmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == 'pallavigaikwad1506@gmail.com';
+    }
+    
+    function isSeller(sellerUID) {
+      return isAuthenticated() && request.auth.uid == sellerUID;
+    }
+    
+    function isCustomer(customerId) {
+      return isAuthenticated() && request.auth.uid == customerId;
+    }
+
+    // Check if the authenticated user has 'seller' role in Firestore
+    function isSellerRole() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'seller';
+    }
+
+    // Check if the authenticated user has 'customer' role in Firestore
+    function isCustomerRole() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'customer';
+    }
+    
+    // ─── Settings ─────────────────────────────────────────────────────────────
+    // Readable by all (site name, contact etc.), writable by admin only
+    match /settings/{document=**} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // ─── Users ────────────────────────────────────────────────────────────────
+    // Each user can read/write their own document; admin can read all.
+    // Role field is set on account creation and cannot be changed by the user themselves
+    // (unless the value stays the same, preventing privilege escalation).
+    match /users/{userId} {
+      allow read: if isAdmin() || request.auth.uid == userId;
+
+      // Allow users to create their own profile if they are authenticated
+      allow create: if request.auth.uid == userId &&
+                       // Prevent self-assigning admin role
+                       request.resource.data.role != 'admin';
+
+      // Allow users to update their own profile but NOT change their role
+      allow update: if (request.auth.uid == userId &&
+                        request.resource.data.role == resource.data.role) ||
+                       isAdmin();
+
+      allow delete: if isAdmin();
+    }
+    
+    // ─── Nurseries ────────────────────────────────────────────────────────────
+    match /nurseries/{nurseryId} {
+      // Anyone can read approved nurseries (customer browsing)
+      allow read: if resource.data.status == 'approved' || isAdmin() || isSeller(resource.data.sellerUID);
+      
+      // Authenticated sellers can register a nursery
+      allow create: if isAuthenticated() &&
+                       request.resource.data.sellerUID == request.auth.uid &&
+                       isSellerRole();
+      
+      // Sellers can update their own nursery; admin can update any
+      allow update: if isAdmin() || isSeller(resource.data.sellerUID);
+      
+      // Only admin can delete nurseries
+      allow delete: if isAdmin();
+    }
+    
+    // ─── Plants ───────────────────────────────────────────────────────────────
+    match /plants/{plantId} {
+      // Anyone can read plants from approved nurseries
+      allow read: if isAdmin() || isSeller(resource.data.sellerUID) ||
+                     (exists(/databases/$(database)/documents/nurseries/$(resource.data.nurseryId)) &&
+                      get(/databases/$(database)/documents/nurseries/$(resource.data.nurseryId)).data.status == 'approved');
+      
+      // Sellers can create plants in their own approved nursery
+      allow create: if isAuthenticated() && 
+                       request.resource.data.sellerUID == request.auth.uid &&
+                       exists(/databases/$(database)/documents/nurseries/$(request.resource.data.nurseryId)) &&
+                       get(/databases/$(database)/documents/nurseries/$(request.resource.data.nurseryId)).data.sellerUID == request.auth.uid &&
+                       get(/databases/$(database)/documents/nurseries/$(request.resource.data.nurseryId)).data.status == 'approved';
+      
+      // Sellers can update their own plants; admin can update any
+      allow update: if isAdmin() || isSeller(resource.data.sellerUID);
+      
+      // Sellers can delete their own plants; admin can delete any
+      allow delete: if isAdmin() || isSeller(resource.data.sellerUID);
+    }
+    
+    // ─── Inventory ────────────────────────────────────────────────────────────
+    match /inventory/{inventoryId} {
+      // Sellers and admin can read inventory; customers can read for browsing
+      allow read: if isAdmin() || isSeller(resource.data.sellerUID) || isAuthenticated();
+      
+      // Sellers can create inventory for their own plants (in approved nurseries)
+      allow create: if isAuthenticated() && 
+                       request.resource.data.sellerUID == request.auth.uid &&
+                       exists(/databases/$(database)/documents/plants/$(request.resource.data.plantId)) &&
+                       get(/databases/$(database)/documents/plants/$(request.resource.data.plantId)).data.sellerUID == request.auth.uid;
+      
+      // Sellers can update their own inventory; admin can update any
+      allow update: if isAdmin() || isSeller(resource.data.sellerUID);
+      
+      // Sellers can delete their own inventory; admin can delete any
+      allow delete: if isAdmin() || isSeller(resource.data.sellerUID);
+    }
+    
+    // ─── Orders ───────────────────────────────────────────────────────────────
+    match /orders/{orderId} {
+      // Customers can read their own orders; sellers see orders for their nursery; admin sees all
+      allow read: if isAdmin() ||
+                     resource.data.customerId == request.auth.uid ||
+                     isSeller(resource.data.sellerUid);
+      
+      // Authenticated customers can create orders for themselves
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      
+      // Sellers can update order status for their orders; admin can update any order
+      allow update: if isAdmin() || 
+                       (resource.data.customerId == request.auth.uid) ||
+                       isSeller(resource.data.sellerUid);
+      
+      // Only admin can delete orders
+      allow delete: if isAdmin();
+    }
+    
+    // ─── Complaints ───────────────────────────────────────────────────────────
+    match /complaints/{complaintId} {
+      // Customers see their own complaints; sellers see those assigned to them; admin sees all
+      allow read: if isAdmin() ||
+                     resource.data.customerId == request.auth.uid ||
+                     isSeller(resource.data.sellerUid);
+      
+      // Authenticated users can file complaints for themselves
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      
+      // Customers, sellers (for responses), and admin can update
+      allow update: if isAdmin() || 
+                       resource.data.customerId == request.auth.uid ||
+                       isSeller(resource.data.sellerUid);
+      
+      // Only admin can delete complaints
+      allow delete: if isAdmin();
+    }
+    
+    // ─── Reviews ──────────────────────────────────────────────────────────────
+    match /reviews/{reviewId} {
+      // Anyone can read published reviews
+      allow read: if resource.data.status == 'published' || isAdmin() || isCustomer(resource.data.customerId);
+      
+      // Customers can create reviews
+      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
+      
+      // Customers can update their own reviews; admin can moderate
+      allow update: if isAdmin() || isCustomer(resource.data.customerId);
+      
+      // Only admin can delete reviews
+      allow delete: if isAdmin();
+    }
+    
+    // ─── Categories ───────────────────────────────────────────────────────────
+    // Readable by all; writable by admin only
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // ─── Carts ────────────────────────────────────────────────────────────────
+    // Each user manages their own cart document
+    match /carts/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // ─── Deny all other access ────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

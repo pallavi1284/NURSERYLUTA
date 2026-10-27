@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-neutral-50 text-neutral-900 font-sans antialiased;
+  }
+  .dark body {
+    @apply bg-neutral-950 text-neutral-100;
+  }
+  h1, h2, h3, h4, h5 {
+    @apply font-display;
+  }
+}
+
+@layer components {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .card-shadow {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .card-shadow-lg {
+    box-shadow: 0 10px 30px -12px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.05);
+  }
+  /* Dark mode surface utilities */
+  .surface {
+    @apply bg-white border-neutral-200;
+  }
+  .dark .surface {
+    @apply bg-neutral-900 border-neutral-800;
+  }
+  .surface-2 {
+    @apply bg-neutral-50 border-neutral-200;
+  }
+  .dark .surface-2 {
+    @apply bg-neutral-800/50 border-neutral-700;
+  }
+  .text-heading {
+    @apply text-neutral-900;
+  }
+  .dark .text-heading {
+    @apply text-neutral-100;
+  }
+  .text-body {
+    @apply text-neutral-600;
+  }
+  .dark .text-body {
+    @apply text-neutral-400;
+  }
+  .text-muted {
+    @apply text-neutral-500;
+  }
+  .dark .text-muted {
+    @apply text-neutral-500;
+  }
+}
